@@ -14,7 +14,7 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "data", "output")
 # Q = 1  : 无损压缩 (Lossless)，画质完美，压缩率较低
 # Q = 5、10 : 轻微有损，画质肉眼难辨，压缩率显著提升 (推荐)
 # Q = 20 : 明显有损，有色块/马赛克，压缩率极高
-Q_FACTOR = 10
+Q_FACTOR = 50
 
 # 支持的图片格式 (建议使用 bmp 测试以获得最准确的压缩率对比)
 SUPPORTED_EXTENSIONS = ('.bmp', )
