@@ -1,4 +1,4 @@
-# utils.py
+import math
 import os
 import numpy as np
 from PIL import Image
@@ -62,3 +62,30 @@ def get_file_size(path):
     if os.path.exists(path):
         return os.path.getsize(path)
     return 0
+
+
+
+def calculate_psnr(original, compressed):
+    """
+    计算峰值信噪比 (PSNR)
+    :param original: 原始图像像素数组 (numpy array)
+    :param compressed: 还原后的像素数组
+    :return: PSNR值 (dB)
+    """
+    # 确保类型一致，避免溢出
+    original = np.array(original, dtype=np.float64)
+    compressed = np.array(compressed, dtype=np.float64)
+
+    # 1. 计算均方误差 (MSE)
+    mse = np.mean((original - compressed) ** 2)
+
+    # 2. 如果 MSE 为 0，说明完全无损，PSNR 为无穷大
+    if mse == 0:
+        return 100.0  # 用 100 dB 表示无穷大/无损
+
+    # 3. 计算 PSNR
+    # 对于 8-bit 图像，MAX_I = 255
+    max_pixel = 255.0
+    psnr = 20 * math.log10(max_pixel / math.sqrt(mse))
+
+    return psnr

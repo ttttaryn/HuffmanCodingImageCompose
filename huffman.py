@@ -5,7 +5,6 @@ from collections import Counter
 
 
 class HuffmanNode:
-
     def __init__(self, char, freq):
         self.char = char
         self.freq = freq
@@ -22,12 +21,9 @@ class HuffmanCompressor:
         self.reverse_mapping = {}
 
     def _make_frequency_dict(self, pixels):
-        """统计频率"""
-        # pixels 此时已经是经过差分处理的数据
         return dict(Counter(pixels))
 
     def _make_heap(self, frequency):
-        """构建最小堆"""
         heap = []
         for key in frequency:
             node = HuffmanNode(key, frequency[key])
@@ -35,19 +31,15 @@ class HuffmanCompressor:
         return heap
 
     def _merge_nodes(self, heap):
-        """合并节点构建树"""
         while len(heap) > 1:
             node1 = heapq.heappop(heap)
             node2 = heapq.heappop(heap)
-
             merged = HuffmanNode(None, node1.freq + node2.freq)
             merged.left = node1
             merged.right = node2
-
             heapq.heappush(heap, merged)
 
     def _make_codes(self, root, current_code=""):
-        """生成 0/1 编码表"""
         if root is None:
             return
         if root.char is not None:
@@ -58,37 +50,43 @@ class HuffmanCompressor:
         self._make_codes(root.right, current_code + "1")
 
     def _get_encoded_bytes(self, encoded_text):
-        """将 01 字符串打包成字节流"""
         extra_padding = 8 - len(encoded_text) % 8
         encoded_text = encoded_text + "0" * extra_padding
-
-        # 记录填充了多少位，放在最开头
         padded_info = "{0:08b}".format(extra_padding)
         encoded_text = padded_info + encoded_text
 
-        # 转换为字节数组
         b = bytearray()
         for i in range(0, len(encoded_text), 8):
             byte = encoded_text[i:i + 8]
             b.append(int(byte, 2))
         return b
 
-    def compress_data(self, pixels):
+    def compress_data(self, pixels, quantization_factor=1):
         """
-        核心压缩逻辑：
-        1. 差分变换 (Delta Encoding) -> 优化数据分布
-        2. 哈夫曼编码
+        核心压缩逻辑 (已修复基准值丢失 Bug)
         """
-        # 1. 转为 numpy 数组，确保类型为 uint8
         pixels = np.array(pixels, dtype=np.uint8)
 
-        # 2. 计算差分: Current - Previous
-        # prepend=pixels[0] 使得第一个元素保持不变，作为还原的基准
-        # astype(np.uint8) 自动处理负数溢出 (例如 -1 会变成 255)，这是合法的图像处理操作
-        delta = np.diff(pixels, prepend=pixels[0])
+        # --- 1. 标量量化 ---
+        if quantization_factor > 1:
+            pixels = (pixels // quantization_factor).astype(np.uint8)
+
+        # --- 2. 差分编码 (修复点) ---
+        # 错误写法: prepend=pixels[0] (会导致第一个像素归零，整图偏移)
+        # 正确写法: prepend=0 (保存第一个像素的绝对值)
+        # 注意: 0 需要转为与 pixels 相同的类型以防报错，但通常 int 0 也可以
+
+        # 计算差分: Current - Previous
+        # 使用 int16 中间态防止 uint8 减法时的意外溢出困扰（虽然 numpy diff 通常处理得好）
+        # 但为了绝对安全，我们手动处理一下首位
+
+        # 方案：使用 prepend=0，这样 delta[0] = pixels[0] - 0 = pixels[0]
+        delta = np.diff(pixels, prepend=0)
+
+        # 再次转回 uint8 (利用模运算特性存储负数差值)
         pixels_to_encode = delta.astype(np.uint8)
 
-        # 3. 正常的哈夫曼流程
+        # --- 3. 哈夫曼编码 ---
         frequency = self._make_frequency_dict(pixels_to_encode)
         heap = self._make_heap(frequency)
         self._merge_nodes(heap)
@@ -96,17 +94,17 @@ class HuffmanCompressor:
         root = heap[0]
         self._make_codes(root)
 
-        # 生成编码
         encoded_text = "".join([self.codes[pixel] for pixel in pixels_to_encode])
         byte_data = self._get_encoded_bytes(encoded_text)
 
         return byte_data, frequency
 
-    def decompress_data(self, byte_data, frequency):
+    def decompress_data(self, byte_data, frequency, quantization_factor=1):
         """
         核心解压逻辑：
-        1. 哈夫曼解码 -> 得到差分值
-        2. 反差分变换 (Inverse Delta) -> 还原原始像素
+        1. 哈夫曼解码
+        2. 反差分 (累加)
+        3. 反量化 (恢复精度)
         """
         # 1. 重建哈夫曼树
         heap = self._make_heap(frequency)
@@ -116,20 +114,16 @@ class HuffmanCompressor:
         self.reverse_mapping = {}
         self._make_codes(root)
 
-        # 2. 解析二进制流
+        # 2. 解析位流
         bit_string = []
-        # 优化：大文件时 join 可能慢，但在 Python 中这是标准做法
-        # 如果追求极致性能，这里可用 C++ 扩展，但作业级 Python 足够
         for byte in byte_data:
             bit_string.append(f"{byte:08b}")
         bit_string = "".join(bit_string)
 
-        # 移除填充位
         extra_padding = int(bit_string[:8], 2)
         bit_string = bit_string[8:]
         encoded_text = bit_string[:-extra_padding]
 
-        # 3. 解码得到差分数组
         decoded_deltas = []
         current_code = ""
         for bit in encoded_text:
@@ -138,10 +132,16 @@ class HuffmanCompressor:
                 decoded_deltas.append(self.reverse_mapping[current_code])
                 current_code = ""
 
-        # 4. 反差分还原 (累加)
-        # 逻辑：Current = (Previous + Delta) % 256
-        # np.cumsum(dtype=np.uint8) 会自动处理溢出回绕，完美还原原始数据
+        # 3. 反差分还原 (累加)
         delta_array = np.array(decoded_deltas, dtype=np.uint8)
         restored_pixels = np.cumsum(delta_array, dtype=np.uint8)
+
+        # 4. [有损] 反量化 (Restoration)
+        if quantization_factor > 1:
+            # 核心：乘回因子。例如 15 * 10 = 150 (原始是155, 误差5)
+            # 注意防止溢出，但在 uint8 图像中通常还好，或者先转 int16 乘完再转 uint8
+            restored_pixels = restored_pixels.astype(np.float32) * quantization_factor
+            # 截断到 0-255
+            restored_pixels = np.clip(restored_pixels, 0, 255).astype(np.uint8)
 
         return restored_pixels
