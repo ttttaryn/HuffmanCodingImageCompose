@@ -79,7 +79,7 @@ python main.py
 Bash
 
 ```
-python experiment_runner.py
+python runner.py
 ```
 
 - 生成的 CSV 数据表：`experiment_results.csv`
